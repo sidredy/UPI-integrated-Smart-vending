@@ -1,0 +1,63 @@
+pip install tfx
+
+import os
+import qrcode
+from tfx import v1 as tfx
+from tfx.dsl.component.experimental.decorators import component
+from tfx.dsl.component.experimental.decorators import InputArtifact, OutputArtifact, Parameter
+from tfx.types.standard_artifacts import String
+
+@component
+def QRCodeGenerator(payment_url: Parameter[str], qr_code_path: OutputArtifact[String]):
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(payment_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill='black', back_color='white')
+    output_path = os.path.join(qr_code_path.uri, 'transaction_qr.png')
+    img.save(output_path)
+    qr_code_path.uri = output_path
+
+import os
+from tfx import v1 as tfx
+from tfx.components import CsvExampleGen
+from tfx.orchestration import pipeline
+from tfx.orchestration.local import local_dag_runner
+from tfx.types.standard_artifacts import String
+
+# Import the custom QR code generator component
+from qr_code_generator_component import QRCodeGenerator
+
+def create_pipeline(pipeline_name: str, pipeline_root: str, data_root: str, qr_code_url: str) -> tfx.dsl.Pipeline:
+    # ExampleGen component for ingesting data
+    example_gen = CsvExampleGen(input_base=data_root)
+    
+    # Custom QR Code Generator component
+    qr_code_generator = QRCodeGenerator(payment_url=qr_code_url, qr_code_path=String())
+    
+    # Define the pipeline
+    components = [
+        example_gen,
+        qr_code_generator,
+    ]
+
+    return pipeline.Pipeline(
+        pipeline_name=pipeline_name,
+        pipeline_root=pipeline_root,
+        components=components,
+    )
+
+if __name__ == '__main__':
+    # Define pipeline parameters
+    pipeline_name = 'qr_code_pipeline'
+    pipeline_root = os.path.join(os.getenv('HOME', '/tmp'), 'tfx', pipeline_name)
+    data_root = os.path.join(os.getenv('HOME', '/tmp'), 'data')
+    qr_code_url = 'https://example.com/payment'
+
+    # Create and run the pipeline
+    tfx_pipeline = create_pipeline(pipeline_name, pipeline_root, data_root, qr_code_url)
+    local_dag_runner.LocalDagRunner().run(tfx_pipeline)
